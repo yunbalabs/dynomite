@@ -245,6 +245,7 @@ struct response_mgr {
     struct msg  *err_rsp;           // first error response
     struct conn *conn;
     struct msg *msg;
+    uint64_t    first_response;
 };
 
 void init_response_mgr(struct response_mgr *rspmgr, struct msg*, bool is_read,
@@ -265,6 +266,8 @@ struct msg {
     struct conn          *owner;          /* message owner - client | server */
     int64_t              stime_in_microsec;  /* start time in microsec */
 
+    struct msg           *selected_rsp;   /* selected response */
+    uint8_t              awaiting_rsps;
     struct rbnode        tmo_rbe;         /* entry in rbtree */
 
     struct mhdr          mhdr;            /* message mbuf header */
@@ -312,6 +315,7 @@ struct msg {
     unsigned             first_fragment:1;/* first fragment? */
     unsigned             last_fragment:1; /* last fragment? */
     unsigned             swallow:1;       /* swallow response? */
+    unsigned             rsp_sent:1;       /* swallow response? */
 
     int					 data_store;
     //dynomite
@@ -338,6 +342,21 @@ static inline rstatus_t
 msg_handle_response(struct msg *req, struct msg *rsp)
 {
     return req->rsp_handler(req, rsp);
+}
+
+static inline void
+msg_incr_awaiting_rsps(struct msg *msg)
+{
+    log_error("req %d, awaiting_rsps %u", msg->id, msg->awaiting_rsps);
+    msg->awaiting_rsps++;
+}
+
+static inline void
+msg_decr_awaiting_rsps(struct msg *msg)
+{
+    ASSERT(msg->awaiting_rsps> 0);
+    log_error("req %d, awaiting_rsps %u", msg->id, msg->awaiting_rsps);
+    msg->awaiting_rsps--;
 }
 
 uint32_t msg_free_queue_size(void);

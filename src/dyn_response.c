@@ -45,7 +45,9 @@ rsp_put(struct msg *msg)
     if (!msg)
         return;
     ASSERT(!msg->request);
-    ASSERT(msg->peer == NULL);
+    ASSERT(!msg->peer);
+    // no meaning for awaiting responses for a rsp.
+    msg->awaiting_rsps = 0;
     msg_put(msg);
 }
 
@@ -85,6 +87,13 @@ rsp_make_error(struct context *ctx, struct conn *conn, struct msg *msg)
     if (pmsg != NULL) {
         ASSERT(!pmsg->request && pmsg->peer == msg);
         msg->peer = NULL;
+        pmsg->peer = NULL;
+        rsp_put(pmsg);
+    }
+    pmsg = msg->selected_rsp;
+    if (pmsg != NULL) {
+        ASSERT(!pmsg->request && pmsg->peer == msg);
+        msg->selected_rsp = NULL;
         pmsg->peer = NULL;
         rsp_put(pmsg);
     }
@@ -197,7 +206,7 @@ server_rsp_filter(struct context *ctx, struct conn *conn, struct msg *msg)
         log_debug(LOG_DEBUG, "swallow rsp %"PRIu64" len %"PRIu32" of req "
                   "%"PRIu64" on s %d", msg->id, msg->mlen, pmsg->id,
                   conn->sd);
-
+        //msg_decr_awaiting_rsps(pmsg);
         rsp_put(msg);
         req_put(pmsg);
         return true;
@@ -245,6 +254,7 @@ server_rsp_forward(struct context *ctx, struct conn *s_conn, struct msg *rsp)
                rsp->id, rsp->parent_id);
     req->peer = rsp;
     rsp->peer = req;
+    //msg_decr_awaiting_rsps(req);
 
     rsp->pre_coalesce(rsp);
 
@@ -330,14 +340,14 @@ rsp_send_next(struct context *ctx, struct conn *conn)
             return NULL;
         }
         rsp->peer = req;
-        req->peer = rsp;
+        req->selected_rsp = rsp;
         if (conn->dyn_mode) {
       	  stats_pool_incr(ctx, conn->owner, peer_forward_error);
         } else {
       	  stats_pool_incr(ctx, conn->owner, forward_error);
         }
     } else {
-        rsp = req->peer;
+        rsp = req->selected_rsp ? req->selected_rsp : req->peer;
     }
     ASSERT(!rsp->request);
 
@@ -351,31 +361,33 @@ rsp_send_next(struct context *ctx, struct conn *conn)
 }
 
 void
-rsp_send_done(struct context *ctx, struct conn *conn, struct msg *msg)
+rsp_send_done(struct context *ctx, struct conn *conn, struct msg *rsp)
 {
-    struct msg *pmsg; /* peer message (request) */
+    struct msg *req; /* peer message (request) */
 
     ASSERT(conn->type == CONN_CLIENT);
     ASSERT(conn->smsg == NULL);
 
     if (log_loggable(LOG_VVERB)) {
-       log_debug(LOG_VVERB, "send done rsp %"PRIu64" on c %d", msg->id, conn->sd);
+       log_debug(LOG_VVERB, "send done rsp %"PRIu64" on c %d", rsp->id, conn->sd);
     }
 
-    log_debug(LOG_VERB, "conn %p msg %p done", conn, msg);
-    pmsg = msg->peer;
+    log_debug(LOG_VERB, "conn %p rsp %p done", conn, rsp);
+    req = rsp->peer;
 
-    ASSERT(!msg->request && pmsg->request);
-    ASSERT(pmsg->peer == msg);
-    ASSERT(pmsg->done && !pmsg->swallow);
+    ASSERT(!rsp->request && req->request);
+    ASSERT(req->selected_rsp == rsp);
+    ASSERT(req->done && !req->swallow);
 
     /* dequeue request from client outq */
-    conn_dequeue_outq(ctx, conn, pmsg);
+    conn_dequeue_outq(ctx, conn, req);
 
     // Remove it from the dict
-    struct msg *req = msg->peer;
-    log_debug(LOG_VERB, "conn %p removing message %d:%d", conn, req->id, req->parent_id);
-    dictDelete(conn->outstanding_msgs_dict, &req->id);
-    req_put(pmsg);
+    req->rsp_sent = 1;
+    if (!req->awaiting_rsps) {
+        log_warn("conn %p removing message %d:%d", conn, req->id, req->parent_id);
+        dictDelete(conn->outstanding_msgs_dict, &req->id);
+        req_put(req);
+    }
 }
 

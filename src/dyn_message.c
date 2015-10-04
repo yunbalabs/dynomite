@@ -245,6 +245,8 @@ done:
     msg->id = ++msg_id;
     msg->parent_id = 0;
     msg->peer = NULL;
+    msg->selected_rsp = NULL;
+    msg->awaiting_rsps = 1;
     msg->owner = NULL;
     msg->stime_in_microsec = 0L;
 
@@ -295,6 +297,7 @@ done:
     msg->first_fragment = 0;
     msg->last_fragment = 0;
     msg->swallow = 0;
+    msg->rsp_sent = 0;
     msg->data_store = DATA_REDIS;
 
     //dynomite
@@ -427,7 +430,6 @@ msg_clone(struct msg *src, struct mbuf *mbuf_start, struct msg *target)
     return DN_OK;
 }
 
-
 struct msg *
 msg_get_error(int data_store, dyn_error_t dyn_err, err_t err)
 {
@@ -520,6 +522,11 @@ msg_free(struct msg *msg)
 void
 msg_put(struct msg *msg)
 {
+    if (msg->request && msg->awaiting_rsps) {
+        log_error("Unable to put req msg %d awaiting_rsps =  %d", msg->id, msg->awaiting_rsps);
+        msg_dump(msg);
+        return;
+    }
     if (msg == NULL) {
    	 log_debug(LOG_ERR, "Unable to put a null msg - probably due to memory hard-set limit");
    	 return;

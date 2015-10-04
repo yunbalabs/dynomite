@@ -107,6 +107,8 @@ dnode_rsp_forward_match(struct context *ctx, struct conn *peer_conn, struct msg 
     req = TAILQ_FIRST(&peer_conn->omsg_q);
     c_conn = req->owner;
 
+    //msg_decr_awaiting_rsps(req);
+
     /* if client consistency is dc_one forward the response from only the
        local node. Since dyn_dnode_peer is always a remote node, drop the rsp */
     if (req->consistency == DC_ONE) {
@@ -156,8 +158,12 @@ dnode_rsp_forward_match(struct context *ctx, struct conn *peer_conn, struct msg 
 
     rsp->pre_coalesce(rsp);
 
+    if (!((c_conn->type == CONN_CLIENT) ||
+           (c_conn->type == CONN_DNODE_PEER_CLIENT)))
+        log_error("conn type %s", conn_get_type_string(c_conn));
     ASSERT((c_conn->type == CONN_CLIENT) ||
            (c_conn->type == CONN_DNODE_PEER_CLIENT));
+    
 
     dnode_rsp_forward_stats(ctx, peer_conn->owner, rsp);
     if (TAILQ_FIRST(&c_conn->omsg_q) != NULL && req_done(c_conn, req)) {
@@ -195,7 +201,7 @@ dnode_rsp_forward(struct context *ctx, struct conn *peer_conn, struct msg *rsp)
     /* dequeue peer message (request) from peer conn */
     while (true) {
         req = TAILQ_FIRST(&peer_conn->omsg_q);
-        log_debug(LOG_VERB, "dnode_rsp_forward entering req %p rsp %p...", req, rsp);
+        log_debug(LOG_VERB, "%s entering req %p rsp %p...", __FUNCTION__, req, rsp);
         c_conn = req->owner;
         if (req->id == rsp->dmsg->id) {
             dnode_rsp_forward_match(ctx, peer_conn, rsp);
@@ -219,6 +225,8 @@ dnode_rsp_forward(struct context *ctx, struct conn *peer_conn, struct msg *rsp)
             return;
         }
 
+        // The request has got a response now.
+        //msg_decr_awaiting_rsps(req);
         if (req->consistency == DC_ONE) {
             if (req->swallow) {
                 // swallow the request and move on the next one
@@ -466,7 +474,7 @@ dnode_rsp_send_done(struct context *ctx, struct conn *conn, struct msg *msg)
     pmsg = msg->peer;
 
     ASSERT(!msg->request && pmsg->request);
-    ASSERT(pmsg->peer == msg);
+    ASSERT(pmsg->selected_rsp == msg);
     ASSERT(pmsg->done && !pmsg->swallow);
     log_debug(LOG_DEBUG, "DNODE RSP SENT %s %d dmsg->id %u",
               conn_get_type_string(conn),

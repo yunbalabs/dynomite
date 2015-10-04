@@ -234,12 +234,9 @@ client_handle_response(struct conn *conn, msgid_t reqid, struct msg *rsp)
     // now the handler owns the response. the caller owns the request
     ASSERT(conn->type == CONN_CLIENT);
     // Fetch the original request
+    log_warn("handling response %d for req %d", rsp->id, reqid);
     struct msg *req = dictFetchValue(conn->outstanding_msgs_dict, &reqid);
-    if (!req) {
-        log_notice("looks like we already cleanedup the request for %d", reqid);
-        rsp_put(rsp);
-        return DN_OK;
-    }
+    ASSERT(req);
     rstatus_t status = msg_handle_response(req, rsp);
     if (status == DN_OK) {
         struct context *ctx = conn_to_ctx(conn);

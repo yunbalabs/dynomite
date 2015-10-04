@@ -534,6 +534,8 @@ dnode_peer_ack_err(struct context *ctx, struct conn *conn, struct msg*msg)
     }
     struct conn *c_conn = msg->owner;
     // At other connections, these responses would be swallowed.
+    log_warn ("c_conn type %s", conn_get_type_string(c_conn));
+
     ASSERT(c_conn->type == CONN_CLIENT);
 
     // Create an appropriate response for the request so its propagated up;
@@ -546,6 +548,7 @@ dnode_peer_ack_err(struct context *ctx, struct conn *conn, struct msg*msg)
     rsp->dyn_error = msg->dyn_error = PEER_CONNECTION_REFUSE;
     rsp->dmsg = dmsg_get();
     rsp->dmsg->id =  msg->id;
+    //msg_decr_awaiting_rsps(msg);
 
     log_warn("dyn: close s %d schedule error for req %u:%u "
              "len %"PRIu32" type %d from c %d%c %s", conn->sd, msg->id, msg->parent_id,

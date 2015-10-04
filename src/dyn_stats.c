@@ -37,6 +37,7 @@
 #include "dyn_connection.h"
 #include "dyn_conf.h"
 
+extern uint64_t max_wait_consistency;
 struct stats_desc {
     char *name; /* stats name */
     char *desc; /* stats description */
@@ -1028,6 +1029,13 @@ parse_request(int sd, struct stats_cmd *st_cmd)
                     }
 
                     return;
+                } else if (strncmp(reqline[1], "/max_wait_consistency", 21) == 0) {
+                    st_cmd->cmd = CMD_MAX_WAIT_CONSISTENCY;
+                    return;
+                } else if (strncmp(reqline[1], "/reset_max_wait_consistency", 27) == 0) {
+                    max_wait_consistency = 0;
+                    st_cmd->cmd = CMD_PING;
+                    return;
                 }
 
                 if (strncmp(reqline[1], "/state", 6) == 0) {
@@ -1149,6 +1157,11 @@ stats_send_rsp(struct stats *st)
                    get_consistency_string(g_read_consistency),
                    get_consistency_string(g_write_consistency));
         return stats_http_rsp(sd, cons_rsp, dn_strlen(cons_rsp));
+    } else if (cmd == CMD_MAX_WAIT_CONSISTENCY) {
+        char rsp[1024];
+        dn_sprintf(rsp, "Max Wait Consistency: %lu\r\n",
+                   max_wait_consistency);
+        return stats_http_rsp(sd, rsp, dn_strlen(rsp));
     } else if (cmd == CMD_PEER_DOWN || cmd == CMD_PEER_UP || cmd == CMD_PEER_RESET) {
         log_debug(LOG_VERB, "st_cmd.req_data '%.*s' ", st_cmd.req_data);
         struct server_pool *sp = array_get(&st->ctx->pool, 0);

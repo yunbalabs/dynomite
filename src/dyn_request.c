@@ -24,12 +24,10 @@
 #include "dyn_server.h"
 #include "dyn_dnode_peer.h"
 
-static rstatus_t msg_write_one_rsp_handler(struct msg *req, struct msg *rsp);
-static rstatus_t msg_write_dc_quorum_rsp_handler(struct msg *req, struct msg *rsp);
-static rstatus_t msg_read_dc_quorum_rsp_handler(struct msg *req, struct msg *rsp);
-static rstatus_t msg_read_one_rsp_handler(struct msg *req, struct msg *rsp);
+static rstatus_t msg_local_quorum_rsp_handler(struct msg *req, struct msg *rsp);
+static rstatus_t msg_local_one_rsp_handler(struct msg *req, struct msg *rsp);
 static msg_response_handler_t msg_get_rsp_handler(struct msg *req);
-
+uint64_t max_wait_consistency = 0;
 struct msg *
 req_get(struct conn *conn)
 {
@@ -59,6 +57,17 @@ req_put(struct msg *msg)
         msg->peer = NULL;
         pmsg->peer = NULL;
         rsp_put(pmsg);
+    }
+    /* if selected rsp is different from peer free that one too */
+    if (pmsg != msg->selected_rsp) {
+        pmsg = msg->selected_rsp;
+        if (pmsg != NULL) {
+            ASSERT(!pmsg->request);
+            ASSERT(pmsg->peer == msg);
+            msg->selected_rsp = NULL;
+            pmsg->peer = NULL;
+            rsp_put(pmsg);
+        }
     }
 
     msg_tmo_delete(msg);
@@ -764,7 +773,6 @@ req_forward_all_local_racks(struct context *ctx, struct conn *c_conn,
         //log_debug(LOG_DEBUG, "rack name '%.*s'",
         //            rack->name->len, rack->name->data);
         struct msg *rack_msg;
-        // clone message even for local node
         struct server_pool *pool = c_conn->owner;
         if (string_compare(rack->name, &pool->rack) == 0 ) {
             rack_msg = msg;
@@ -778,6 +786,7 @@ req_forward_all_local_racks(struct context *ctx, struct conn *c_conn,
             }
 
             msg_clone(msg, orig_mbuf, rack_msg);
+            //msg_incr_awaiting_rsps(msg);
             log_debug(LOG_VERB, "msg (%d:%d) clone to rack msg (%d:%d)",
                     msg->id, msg->parent_id, rack_msg->id, rack_msg->parent_id);
             rack_msg->swallow = true;
@@ -828,12 +837,12 @@ req_forward_remote_dc(struct context *ctx, struct conn *c_conn, struct msg *msg,
     struct msg *rack_msg = msg_get(c_conn, msg->request, msg->data_store);
     if (rack_msg == NULL) {
         log_debug(LOG_VERB, "whelp, looks like yer screwed now, buddy. no inter-rack messages for you!");
-        msg_put(rack_msg);
         return;
     }
 
     msg_clone(msg, orig_mbuf, rack_msg);
     rack_msg->swallow = true;
+    //msg_incr_awaiting_rsps(msg);
 
     if (log_loggable(LOG_DEBUG)) {
         log_debug(LOG_DEBUG, "forwarding request to conn '%s' on rack '%.*s'",
@@ -860,7 +869,7 @@ req_forward(struct context *ctx, struct conn *c_conn, struct msg *msg)
     keylen = 0;
 
     // add the message to the dict
-    log_debug(LOG_DEBUG, "conn %p adding message %d:%d", c_conn, msg->id, msg->parent_id);
+    log_warn("conn %p adding message %d:%d", c_conn, msg->id, msg->parent_id);
     dictAdd(c_conn->outstanding_msgs_dict, &msg->id, msg);
 
     if (!string_empty(&pool->hash_tag)) {
@@ -1026,46 +1035,55 @@ static msg_response_handler_t
 msg_get_rsp_handler(struct msg *req)
 {
     if ((req->consistency == DC_ONE) || (req->type == MSG_REQ_REDIS_PING))
-        return req->is_read ? msg_read_one_rsp_handler :
-                              msg_write_one_rsp_handler;
-    return req->is_read ? msg_read_dc_quorum_rsp_handler :
-                          msg_write_dc_quorum_rsp_handler;
+        return msg_local_one_rsp_handler;
+    return msg_local_quorum_rsp_handler;
 }
 
 static rstatus_t
-msg_read_one_rsp_handler(struct msg *req, struct msg *rsp)
+drop_extra_rsp(struct msg *req, struct msg *rsp)
+{
+    rsp_put(rsp);
+    // try to remove the req if the rsp is sent and we are done.
+    if (req->rsp_sent && !req->awaiting_rsps) {
+        log_warn("req %d completed", req->id);
+        struct conn *conn = req->owner;
+        dictDelete(conn->outstanding_msgs_dict, &req->id);
+        req_put(req);
+    }
+    return DN_NOOPS;
+}
+
+static rstatus_t
+msg_local_one_rsp_handler(struct msg *req, struct msg *rsp)
 {
     if (req->peer)
         log_warn("Received more than one response for dc_one. req: %d:%d \
                  prev rsp %d:%d new rsp %d:%d", req->id, req->parent_id,
                  req->peer->id, req->peer->parent_id, rsp->id, rsp->parent_id);
-    req->peer = rsp;
+    if (req->selected_rsp)
+        return drop_extra_rsp(req, rsp);
+    req->selected_rsp = rsp;
     rsp->peer = req;
     return DN_OK;
 }
 
 static rstatus_t
-msg_write_one_rsp_handler(struct msg *req, struct msg *rsp)
+msg_local_quorum_rsp_handler(struct msg *req, struct msg *rsp)
 {
-    if (req->peer)
-        log_warn("Received more than one response for dc_one. req: %d:%d \
-                 prev rsp %d:%d new rsp %d:%d", req->id, req->parent_id,
-                 req->peer->id, req->peer->parent_id, rsp->id, rsp->parent_id);
-    req->peer = rsp;
-    rsp->peer = req;
-    return DN_OK;
-}
+    // if this request is already done, may be not replied back to the client
+    // just drop the response.
+    msg_decr_awaiting_rsps(req);
+    if (req->selected_rsp)
+        return drop_extra_rsp(req, rsp);
 
-static rstatus_t
-msg_read_dc_quorum_rsp_handler(struct msg *req, struct msg *rsp)
-{
+    // submit the response to the request
     rspmgr_submit_response(&req->rspmgr, rsp);
     if (!rspmgr_is_done(&req->rspmgr))
         return DN_EAGAIN;
     // rsp is absorbed by rspmgr. so we can use that variable
     rsp = rspmgr_get_response(&req->rspmgr);
     rspmgr_free_other_responses(&req->rspmgr, rsp);
-    req->peer = rsp;
+    req->selected_rsp = rsp;
     rsp->peer = req;
     req->err = rsp->err;
     req->error = rsp->error;
@@ -1073,23 +1091,6 @@ msg_read_dc_quorum_rsp_handler(struct msg *req, struct msg *rsp)
     return DN_OK;
 }
 
-
-static rstatus_t
-msg_write_dc_quorum_rsp_handler(struct msg *req, struct msg *rsp)
-{
-    rspmgr_submit_response(&req->rspmgr, rsp);
-    if (!rspmgr_is_done(&req->rspmgr))
-        return DN_EAGAIN;
-    // rsp is absorbed by rspmgr. so we can use that variable
-    rsp = rspmgr_get_response(&req->rspmgr);
-    rspmgr_free_other_responses(&req->rspmgr, rsp);
-    req->peer = rsp;
-    rsp->peer = req;
-    req->err = rsp->err;
-    req->error = rsp->error;
-    req->dyn_error = rsp->dyn_error;
-    return DN_OK;
-}
 
 void
 init_response_mgr(struct response_mgr *rspmgr, struct msg *msg, bool is_read,
@@ -1101,15 +1102,24 @@ init_response_mgr(struct response_mgr *rspmgr, struct msg *msg, bool is_read,
     rspmgr->quorum_responses = max_responses/2 + 1;
     rspmgr->conn = conn;
     rspmgr->msg = msg;
+    if (msg->rsp_handler == msg_local_quorum_rsp_handler)
+        msg->awaiting_rsps = max_responses;
 }
 
 static bool
 rspmgr_check_is_done(struct response_mgr *rspmgr)
 {
     // do the required calculation and tell if we are done here
-    // TODO:Optimize HERE>> return once quorum is achieved.
-    //if (rspmgr->good_responses >= rspmgr->quorum_responses)
-        //rspmgr->done = true;
+    /*if (rspmgr->good_responses >= rspmgr->quorum_responses) {
+        rspmgr->done = true;
+        return;
+    }*/
+    if ((rspmgr->first_response) &&
+        (rspmgr->good_responses >= rspmgr->quorum_responses)) {
+        uint64_t wait_consistency = dn_usec_now() - rspmgr->msg->stime_in_microsec;
+        //stats_histo_add_latency(conn_to_ctx(rspmgr->conn), wait_consistency);
+        rspmgr->first_response = 0;
+    }
     uint8_t pending_responses = rspmgr->max_responses -
                                 rspmgr->good_responses -
                                 rspmgr->error_responses;
@@ -1118,9 +1128,8 @@ rspmgr_check_is_done(struct response_mgr *rspmgr)
         return false;
     } else
         rspmgr->done = true;
-    // This is required*********
     /*if ((pending_responses + rspmgr->good_responses) <
-                                                    rspmgr->quorum_responses)
+        rspmgr->quorum_responses)
         rspmgr->done = true;// decision is done. no quorum possible*/
     return rspmgr->done;
 }
@@ -1158,8 +1167,8 @@ rspmgr_get_read_response(struct response_mgr *rspmgr)
         stats_pool_incr(conn_to_ctx(rspmgr->conn), rspmgr->conn->owner,
                         client_non_quorum_r_responses);
         ASSERT(rspmgr->err_rsp);
-        log_error("return non quorum error rsp %p good rsp:%u quorum: %u",
-                  rspmgr->err_rsp, rspmgr->good_responses, rspmgr->quorum_responses);
+        log_error("return non quorum error rsp %d good rsp:%u quorum: %u",
+                  rspmgr->err_rsp->id, rspmgr->good_responses, rspmgr->quorum_responses);
         if (log_loggable(LOG_INFO))
             msg_dump(rspmgr->err_rsp);
         return rspmgr->err_rsp;
@@ -1228,16 +1237,19 @@ rspmgr_free_other_responses(struct response_mgr *rspmgr, struct msg *dont_free)
 rstatus_t
 rspmgr_submit_response(struct response_mgr *rspmgr, struct msg*rsp)
 {
+    if (!rspmgr->first_response)
+        rspmgr->first_response = dn_usec_now();
     if (rsp->error) {
         log_debug(LOG_VERB, "Received error response %d:%d", rsp->id, rsp->parent_id);
         rspmgr->error_responses++;
-        if (rspmgr->err_rsp == NULL)
+        if (rspmgr->err_rsp == NULL) {
             rspmgr->err_rsp = rsp;
-        else
+        } else
             rsp_put(rsp);
     } else {
         log_debug(LOG_VERB, "Good response %d:%d", rsp->id, rsp->parent_id);
         rspmgr->responses[rspmgr->good_responses++] =  rsp;
+        //rsp->peer = rspmgr->msg;
     }
     return DN_OK;
 }

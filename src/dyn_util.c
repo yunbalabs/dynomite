@@ -303,7 +303,6 @@ _dn_free(void *ptr, const char *name, int line)
 void
 dn_stacktrace(int skip_count)
 {
-#ifdef DN_HAVE_BACKTRACE
     void *stack[64];
     char **symbols;
     int size, i, j;
@@ -321,7 +320,6 @@ dn_stacktrace(int skip_count)
     }
 
     free(symbols);
-#endif
 }
 
 void

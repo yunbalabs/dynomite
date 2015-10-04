@@ -187,6 +187,11 @@ rstatus_t
 dnode_client_handle_response(struct conn *conn, msgid_t msg, struct msg *rsp)
 {
     // Forward the response to the caller which is client connection.
+    // For dnode client connection, the only response is the selected response.
+    struct msg *req = rsp->peer;
+    ASSERT(!req->selected_rsp);
+    req->selected_rsp = rsp;
+
     rstatus_t status = DN_OK;
     struct context *ctx = conn_to_ctx(conn);
     status = event_add_out(ctx->evb, conn);
