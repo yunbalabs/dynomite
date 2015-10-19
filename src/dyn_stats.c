@@ -820,14 +820,18 @@ stats_add_node_name(struct stats *st, struct node *node)
 static rstatus_t
 stats_add_node_details(struct stats *st, struct node *node)
 {
-    struct string port_str, token_str;
+    struct string port_str, token_str, state_str, seed_str;
     string_set_text(&port_str, "port");
     string_set_text(&token_str, "token");
+    string_set_text(&state_str, "state");
+    string_set_text(&seed_str, "is_seed");
     
     THROW_STATUS(stats_add_node_name(st, node));
     THROW_STATUS(stats_add_node_host(st, node));
     THROW_STATUS(stats_add_num(&st->clus_desc_buf, &port_str, node->port));
     THROW_STATUS(stats_add_num(&st->clus_desc_buf, &token_str, *(node->token.mag)));
+    THROW_STATUS(stats_add_num(&st->clus_desc_buf, &state_str, node->state));
+    THROW_STATUS(stats_add_num(&st->clus_desc_buf, &seed_str, (int64_t)node->is_seed));
     return DN_OK;
 }
 
