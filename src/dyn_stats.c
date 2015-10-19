@@ -818,9 +818,58 @@ stats_add_node_name(struct stats *st, struct node *node)
 }
 
 static rstatus_t
+stats_node_state_str(dyn_state_t state, struct string *state_str)
+{
+    switch(state) {
+        case INIT:
+            string_set_text(state_str, "INIT");
+            break;
+        case STANDBY:
+            string_set_text(state_str, "STANDBY");
+            break;
+        case WRITES_ONLY: /* = 2,*/
+            string_set_text(state_str, "WRITES_ONLY");
+            break;
+        case RESUMING: /*    = 3,*/
+            string_set_text(state_str, "RESUMING");
+            break;
+        case NORMAL: /*      = 4,*/
+            string_set_text(state_str, "NORMAL");
+            break;
+        case SUSPENDING: /*  = 5,*/
+            string_set_text(state_str, "SUSPENDING");
+            break;
+        case LEAVING: /*     = 6,*/
+            string_set_text(state_str, "LEAVING");
+            break;
+        case JOINING: /*     = 7,*/
+            string_set_text(state_str, "JOINING");
+            break;
+        case DOWN: /*        = 8,*/
+            string_set_text(state_str, "DOWN");
+            break;
+        case REMOVED: /*     = 9,*/
+            string_set_text(state_str, "REMOVED");
+            break;
+        case EXITING: /*     = 10,*/
+            string_set_text(state_str, "EXITING");
+            break;
+        case RESET: /*       = 11,*/
+            string_set_text(state_str, "RESET");
+            break;
+        case UNKNOWN: /*     = 12 */
+            string_set_text(state_str, "UNKNOWN");
+            break;
+        default:
+            string_set_text(state_str, "N/A");
+    }
+    return DN_OK;
+}
+
+static rstatus_t
 stats_add_node_details(struct stats *st, struct node *node)
 {
-    struct string port_str, token_str, state_str, seed_str;
+    struct string port_str, token_str, state_str, state_val, seed_str;
     string_set_text(&port_str, "port");
     string_set_text(&token_str, "token");
     string_set_text(&state_str, "state");
@@ -830,7 +879,9 @@ stats_add_node_details(struct stats *st, struct node *node)
     THROW_STATUS(stats_add_node_host(st, node));
     THROW_STATUS(stats_add_num(&st->clus_desc_buf, &port_str, node->port));
     THROW_STATUS(stats_add_num(&st->clus_desc_buf, &token_str, *(node->token.mag)));
-    THROW_STATUS(stats_add_num(&st->clus_desc_buf, &state_str, node->state));
+    stats_node_state_str(node->state, &state_val);
+    THROW_STATUS(stats_add_string(&st->clus_desc_buf, &state_str, &state_val));
+    /* THROW_STATUS(stats_add_num(&st->clus_desc_buf, &state_str, node->state)); */
     THROW_STATUS(stats_add_num(&st->clus_desc_buf, &seed_str, (int64_t)node->is_seed));
     return DN_OK;
 }
