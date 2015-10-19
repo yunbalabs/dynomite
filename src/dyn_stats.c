@@ -880,6 +880,7 @@ stats_add_node_details(struct stats *st, struct node *node)
     THROW_STATUS(stats_add_num(&st->clus_desc_buf, &port_str, node->port));
     THROW_STATUS(stats_add_num(&st->clus_desc_buf, &token_str, *(node->token.mag)));
     stats_node_state_str(node->state, &state_val);
+    core_debug(st->ctx);
     THROW_STATUS(stats_add_string(&st->clus_desc_buf, &state_str, &state_val));
     /* THROW_STATUS(stats_add_num(&st->clus_desc_buf, &state_str, node->state)); */
     THROW_STATUS(stats_add_num(&st->clus_desc_buf, &seed_str, (int64_t)node->is_seed));
