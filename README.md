@@ -85,3 +85,96 @@ Finally, to make writing syntactically correct configuration files easier, dynom
 ## License
 
 Licensed under the Apache License, Version 2.0: http://www.apache.org/licenses/LICENSE-2.0
+
+## benchmark
+### redis
+localhost:
+```
+redis-benchmark -t ping,set,get,incr,sadd -q -n 100000 -p 6379
+PING_INLINE: 109529.02 requests per second
+PING_BULK: 111856.82 requests per second
+SET: 111982.08 requests per second
+GET: 112107.62 requests per second
+INCR: 107411.38 requests per second
+SADD: 111856.82 requests per second
+```
+
+remote:
+```
+redis-benchmark -t ping,set,get,incr,sadd -q -n 100000 -p 6379 -h 192.168.2.120
+PING_INLINE: 35149.38 requests per second
+PING_BULK: 35473.57 requests per second
+SET: 33726.81 requests per second
+GET: 34164.67 requests per second
+INCR: 32626.43 requests per second
+SADD: 34059.95 requests per second
+```
+
+### dynomite (single)
+localhost:
+```
+redis-benchmark -t ping,set,get,incr,sadd -n 100000 -q -p 8102
+PING_INLINE: 61162.08 requests per second
+PING_BULK: 57504.31 requests per second
+SET: 58275.06 requests per second
+GET: 50100.20 requests per second
+INCR: 51733.06 requests per second
+SADD: 57306.59 requests per second
+```
+
+remote:
+```
+redis-benchmark -t ping,set,get,incr,sadd -q -n 100000 -p 8102 -h 192.168.2.120
+PING_INLINE: 24330.90 requests per second
+PING_BULK: 24026.91 requests per second
+SET: 22956.84 requests per second
+GET: 23507.29 requests per second
+INCR: 24667.00 requests per second
+SADD: 23185.72 requests per second
+```
+
+### dynomite (two rack)
+localhost:
+```
+redis-benchmark -t ping,set,get,incr,sadd -q -n 100000 -p 8102
+PING_INLINE: 56625.14 requests per second
+PING_BULK: 55803.57 requests per second
+SET: 28042.62 requests per second
+GET: 55555.56 requests per second
+INCR: 28192.84 requests per second
+SADD: 28860.03 requests per second
+```
+
+remote:
+```
+redis-benchmark -t ping,set,get,incr,sadd -q -n 100000 -p 8102 -h 192.168.2.120
+PING_INLINE: 21181.95 requests per second
+PING_BULK: 20449.90 requests per second
+SET: 18218.26 requests per second
+GET: 20345.88 requests per second
+INCR: 18754.69 requests per second
+SADD: 18765.25 requests per second
+```
+
+### dynomite (two rack + write_consistency)
+localhost:
+```
+redis-benchmark -t ping,set,get,incr,sadd -q -n 100000 -p 8102
+PING_INLINE: 63171.20 requests per second
+PING_BULK: 56148.23 requests per second
+SET: 24987.51 requests per second
+GET: 56116.72 requests per second
+INCR: 25284.45 requests per second
+SADD: 25195.26 requests per second
+```
+
+remote:
+```
+redis-benchmark -t ping,set,get,incr,sadd -q -n 100000 -p 8102 -h 192.168.2.120
+PING_INLINE: 23568.23 requests per second
+PING_BULK: 23724.79 requests per second
+SET: 17624.25 requests per second
+GET: 22716.95 requests per second
+INCR: 17689.72 requests per second
+SADD: 17930.79 requests per second
+```
